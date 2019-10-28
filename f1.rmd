@@ -1,0 +1,341 @@
+---
+title: "Statisitcal Programming - Sem 1, 2019 - Project 1"
+output: rmarkdown::github_document
+---
+Chrysanthos Koutsoyiannis
+S2001287
+<br/>
+
+### Data
+
+```{r}
+library(tidyverse)
+f1 = readRDS(file="data/f1_2018.rds")
+```
+
+
+<br/>
+
+### Task 1 - Tidy the data (20 marks)
+
+We initially had a list of data, containing information about F1 2018 season. We will not be using all of the data so we needed to distinguish between those we are going to use and the rest.
+We unfolded the data with the use of the functions `unnest_wider` and `unnest_longer`. During the process we dropped as many data as we didn’t need. Every retirement or disqualification of any driver at any race became `NA` with the use of the *positionText* variable. We proceeded to drop more columns, rename some others and finally coerce them into the preferred type. Our final result was some data in the form of a data frame which gave us the advantage of easy manipulation in the future. This process will help us to use the *clean_data* to produce tables, some plots and finally to make inference about F1 2018 season.
+
+```{r}
+clean_data = tibble(f1) %>%
+  unnest_wider(f1) %>%
+  select(RaceTable) %>%
+  unnest_wider(RaceTable) %>%
+  select(Races) %>%
+  unnest_longer(Races) %>%
+  unnest_wider(Races) %>%
+  unnest_longer(Results) %>%
+  hoist(Results, Driver = "Driver",
+                 Constructor = "Constructor") %>%
+  hoist(Driver, givenName = "givenName",
+                familyName = "familyName" ) %>%
+  hoist(Results, position = "position", 
+                 points = "points", 
+                 positionText = "positionText") 
+# Now we try to have every unfinished race from a Driver and display it as NA,
+# using the positionText which seemed the most efficient way
+# We had R for Retirment and D for diqualification. 
+unfinished_ind = (clean_data$positionText == "R")|(clean_data$positionText == "D")
+clean_data$position[unfinished_ind] = NA
+# We procced to introduce NAs when a driver retired or got disqualified
+# Then we remove many of the unnecessary columns\data.
+# Finally we change the type of our data into the desired one. 
+clean_data = clean_data %>%
+  hoist(Constructor, Team = "name") %>%
+  select(c(round, raceName, givenName, familyName, position, points, Team, date)) %>%
+  mutate(Driver = paste(givenName, familyName, sep=" "),
+         givenName = NULL, familyName = NULL) %>%
+  mutate_at(c("round", "position", "points"), as.integer) %>%
+  mutate_at("date", as.Date)
+print(head(clean_data, 20))
+```
+
+<br/>
+
+
+### Task 2 - Drivers' Championship (30 marks)
+
+
+Our next step was to create a table with each driver's position for every Race. Finally the table will be displaying the total *season_points* for each driver. We achieved this by calculating the total season points for each driver and adding the extra column to our data. We then used `pivot_wider` to make each and every race as a unique column. The final touch included arranging the drivers according to the *season_points* and having the *seaon_points* in the end of our table.
+
+```{r}
+standings = select(clean_data, c(Driver, raceName, position, points, date)) %>%
+  arrange(date) %>%
+  group_by(Driver) %>%
+  mutate(season_points = sum(points)) %>%
+  pivot_wider(id_cols = c(Driver, season_points), names_from = raceName, values_from = position) %>% # we take as columns the races 
+  select(-season_points, everything()) %>%                                                           # we put season_points last
+  arrange(desc(season_points))
+  
+# we use kable to have an aesthetically good presentation of our standings
+knitr::kable(standings)
+```
+
+<br/>
+
+
+### Task 3 - Cumulative Constructors (30 marks)
+
+We followed the same strategy as before but this time for teams/constructors. However, we used the points instead of positions for each race. Moreover, we arranged the races in chronological order and instead of simply displaying the points for each race, we accumulated the points, so each race had information which reflected to the total points each team earned until that moment. After grouping the data per team and summing for every driver, we made use of the function `cumsum`, which accumulates the points per race. Below the use of `.[[ncol(.)]]`  reflects to `clean_data[[ncol(clean_data)]]`. We use this technique to refer to the last column of our table (which contains the season's final points), we duplicate it and gave it a proper name(*season_points*), to reflect to the total points each team made in the end of the season.
+
+```{r}
+constructors = select(clean_data,
+                      c(Driver, raceName, position, points, date, Team)) %>%
+  group_by(Team, raceName, date) %>%
+  summarise(points = sum(points)) %>%
+  group_by(Team) %>%
+  arrange(date) %>%
+  mutate(points = cumsum(points)) %>%                                           # we calculate cumulative sum
+  ungroup() %>%
+  pivot_wider(id_cols = Team, 
+              names_from = raceName, values_from = points) %>%                  # we make columns the races
+  mutate(season_points = .[[ncol(.)]]) %>%                                      # we make a column with the final points
+  arrange(desc(season_points))
+# We, again, present our data nicely
+knitr::kable(constructors)
+```
+
+<br/>
+
+### Task 4 - Visualization (20 marks)
+
+Our strategy for the visualization part was to go from general to specific, having each graph giving as more and more information about the F1 2018 season. We begin with manipulating our initial *clean_data*. We will be using our initial data for each plot with only a slight manipulation each time, in order to be able to get our desired graphs. 
+<br/>
+Our first *plot_data* consist of the summation of all points (*season_points*) for every driver.
+Our second *plot_data2* consist of the cumulative summation of the points (*cum_points*) for every driver per race.
+
+
+
+```{r}
+plot_data = clean_data %>%
+  group_by(Driver) %>%
+  mutate(season_points = sum(points)) %>% # we sum our points for every driver
+  ungroup()
+plot_data2 = clean_data %>%
+  group_by(Driver) %>%
+  arrange(round) %>%
+  mutate(cum_points = cumsum(points)) %>% # we calculate cumulative sum for every driver
+  ungroup() 
+```
+
+We follow a similar procedure for the constructors’ data.
+We have *plot_data3* as the simple summation of the drivers that belong to the same team. As a result we have the total points for each race for every team.
+For the *plot_data4* we have the cumulative summation of teams points per race. A similar procedure with *plot_data2*.
+
+
+```{r}
+plot_data3 = clean_data %>%
+  group_by(Team, raceName, round) %>%
+  summarise(points = sum(points)) %>%        #sum over both drivers
+  ungroup() %>%
+  arrange(round)
+plot_data4 = clean_data %>%
+  group_by(Team, raceName, round) %>%        
+  summarise(points = sum(points)) %>%        #sum over both drivers
+  group_by(Team) %>%
+  arrange(round) %>%
+  mutate(cum_points = cumsum(points)) %>%    # find cumulative sum
+  ungroup()
+```
+
+<br/>
+
+#### Graphs
+
+#### Drivers
+
+
+##### Graph 1
+
+We plot in ascending order the total points each diver achieved during the 2018 season. It is a simple generic graph and is a good start to get an idea of what we should search further and how to understand future plots.
+
+```{r}
+ggplot(data = standings, aes(x = reorder(Driver, season_points),
+                             y = season_points)) +
+  labs(x = "Driver", y = "Season Points") +                         # get meaningful labels
+  geom_bar(stat = "identity",                                       # style editing
+           position = "dodge",
+           fill = "aquamarine",
+           color = "black") +
+  coord_flip()                                                      # change orientation
+```
+
+We can observe the dominance of the first six players over the rest. Furthermore we notice a significant difference between the first, second and sixth driver. We would like to know how this is translated during the season, who really dominated and how the final result reflects the potential and skill of each driver during the season.
+
+<br/>
+
+##### Graph 2
+
+We will get a very good idea of what happened if we get a very analytical graphing, or many graphs for each driver compared to the races. We dare to look further, as we now have a better understanding of the final result. Below we get into many small graphs, each representing a driver, with the points earned from each race.
+
+```{r}
+ggplot(data = plot_data, aes(x = raceName,
+                             y = points, color = points)) + 
+  labs(x = "Races", y = "Points") + 
+  theme(axis.text.x = element_blank()) +                        # remove the names of races, as for now is insignificant
+  geom_point() +                                                # make a graph consisting of points
+  facet_wrap(~reorder(Driver, -season_points), nrow = 4 ) +     # put many graphs, one next to another, make four rows
+  scale_colour_gradient(low = "blue", high = "red")             # higher points means closer to red
+ 
+```
+
+With the use of colour red we make a distinction between the drivers who earned the most points.
+Interestingly we see that Lewis Hamilton had a very good season with generally very good results.
+What we observe further is that the first place offers a very attractive award of 25 points, disanalogous with the rest of the places, making the drivers who claimed them to distinguish from the rest.
+This is clear if we remember the results of the first graph. Lewis Hamilton was overall excellent, making him distinguish even more from the rest with the many first places he got. Also, Sebastian Vettel had some fluctuation in his result but the first places he obtained gave him a difference from the rest. Finally, Daniel Ricciardo also had a significant difference, assisted from the two but very important wins he had.
+
+<br/>
+
+##### Graph 3
+
+Lastly we would like to see how these drivers developed throughout the season, who and if anyone dominated and how did the first places help. We achieve this using the cumulative points sum from our *plot_data2*. What we will get will give us a better understanding of the 2018 season. We plot for every driver the points he accumulated through the season.
+
+
+```{r fig.width=8, fig.height=6}
+ggplot(data = plot_data2, aes(x = reorder(raceName, date), y = cum_points,
+                              color = reorder(Driver, -cum_points),            # order Drivers according to cum_points, ascending
+                              group = Driver)) + 
+  geom_point() + 
+  geom_line() +
+  theme(axis.text.x = element_blank()) +                                       # remove the names of each race
+  labs(x = "Races", y = "Points", color = "Drivers")
+```
+
+With this graph we get a better understanding that 6 players dominated the season. We would like to move our interest to those six and we will got this result by using another graph which focuses to those six drivers, by removing the colour from the rest.
+
+```{r fig.width=8, fig.height=6}
+# we take the best 6 drivers to make inference with
+best_6 = c(
+  "Lewis Hamilton","Sebastian Vettel", "Kimi Räikkönen", 
+  "Valtteri Bottas", "Max Verstappen", "Daniel Ricciardo"
+)  
+    
+    
+ggplot(data = plot_data2, aes(x = reorder(raceName, date), y = cum_points,
+                              color = reorder(Driver, -cum_points),
+                              group = Driver)) + 
+  geom_point() + 
+  geom_line() +
+  scale_color_discrete(limits = best_6) +                                      # give colour to only those 6 drivers
+  theme(axis.text.x = element_blank()) +
+  labs(x = "Races", y = "Points", color = "Drivers")
+```
+
+Now we can better focus to the first six. We observe that in reality there was a battle for the first place and for the third. The battle for the first place was actually between Lewis Hamilton and Sebastian Vettel. Hamilton approximately in the half of the season began to earn more and more first places, giving him an amazing streak of 25 points per race, which rendered him the undisputed winner with a record breaking of more than 400 points. The battle for the third place started with all of the rest of the top 6 drivers. Daniel Ricciardo stayed in the fight with the two first positions he acquired, but in the end he wasn’t good enough to keep pressuring for the third place.
+An amazing fight took place for the third position, with the most noteworthy driver, Valtteri Bottas. He remained consistent in high places but the lack of wins condemned him to remain in the fifth place.
+
+<br/>
+
+#### Conclusion
+
+With the use of our data and our graphing tools we have a clearer picture of what happened during the season and what was the deciding factors. Firstly we see that Hamilton was great throughout the season, with the second half being amazing. As a result it gave him not only the first position in the final rankings, but also gave him a record of more than 400 points. Moreover we see a good season for Sebastian Vettel, unable to match Lewis Hamilton winning streak, leaving him in the second place. Lastly we observed an interesting fight between the last four with Ricciardo unable to follow. Concluding in the importance of the first place and the magnitude of Lewis Hamilton achievement.
+
+<br/>
+
+#### Constructors
+
+
+##### Graph 1
+
+We follow a similar approach as before with the drivers, plotting a simple graph showing the total points per team in the end of the season.  
+
+```{r}
+# similar code with above
+ggplot(data = constructors, aes(x = reorder(Team, season_points), y = season_points)) +
+  labs(x = "Team", y = "Season Points") + 
+  geom_bar(stat = "identity",
+           position = "dodge",
+           fill = "green",
+           color = "black") +
+  coord_flip()
+```
+
+We can also observe the dominance of three teams over the rest. It is something we anticipated as the first six drivers of our previous analysis belong to those three teams. What we would like to know in a more granular level is again how the teams performed during the season, as earlier, and which team dominated, if any, during the season.
+
+<br/>
+
+##### Graph 2
+
+We would like to get into more depth about the performance of the teams during the season so we will make a graph which gives us the cumulative points awarded to each team for every race in chronological order.
+
+```{r}
+# similar code with above
+ggplot(data = plot_data4, aes(x = reorder(raceName, round), y = cum_points,
+                              color = reorder(Team, -cum_points),
+                              group = Team)) + 
+  geom_point() + 
+  geom_line() +
+  theme(axis.text.x = element_blank()) +
+  labs(x = "Races", y = "Points", color = "Teams")
+```
+
+It is very clear now that the teams of Mercedes and Ferrari fought for the first place, leaving the rest of the teams far behind. Even the team of Red Bull, which is third, had never contended for something more. It was a clear third position for them without really any other team fighting for that place. With the above graph we can better understand the dominance of Ferrari and Mercedes.
+Is there anything else we can extract from our data if we go into a more granular level?
+
+<br/>
+
+##### Graph 3
+
+We would like to know more about the relationship between the drivers’ performance with the teams’ performance. Who affected their teams more and how.
+We attempt to graph a similar graph as before, with the same axis. This time we consider only the first three teams. We plot the drivers’ performance with a dashed line through points and we use linear regression to find a smooth line representing the cumulative points of the teams. Note here that the line does not pass through the actual points. It is just a representation, which is smooth and easy to handle, in order for us to make an inference about the joint performance.
+
+```{r fig.width=10, fig.height=8}
+# we take the best three teams to make inference with
+best_3 = c("Mercedes", "Ferrari", "Red Bull")
+ggplot(data = plot_data2, aes(x = reorder(raceName, round),
+                              y = cum_points,
+                              color = reorder(Team, -cum_points),
+                              group = Driver)) +
+  geom_point() +
+  geom_line(linetype = "dashed") +
+  scale_color_discrete(limits = best_3) + 
+  theme(axis.text.x = element_blank()) +
+  labs(x = "Races", y = "Points", color = "Teams") +
+  geom_smooth(method = "lm", aes(x = reorder(raceName, round),       # we make a smooth graph which uses linear regression
+                                y = cum_points, group = Team),       # between races and cumulative points for every driver in the same team
+              se = FALSE, fullrange = TRUE, size = 2)                # dont include error, use the full range and make the line thicker
+```
+
+With the realization of the above graph we have a very clear picture of what happened during the season and why. Firstly we see that indeed Red Bull was never a threat and it was never threatened, as both drivers of Red Bull lie below the first two team's drivers and above the rest. Now we observe something really interesting with the performance of Mercedes. The winning streak of Lewis Hamilton, which began in the half of the season was the leading factor for Mercedes' win. We clearly observe that when Hamilton began moving away from the rest, then Mercedes got a good advantage. What is also obvious from the above graph is that Hamilton's huge impact was due to the insignificant difference between Ferrari's and Mercedes’ other two drivers, Bottas and Raikkonen. 
+
+<br/>
+
+#### Conclusion
+
+With the use of our data and our graphing tools we have a clearer picture of what happened during the season for both the teams and drivers together. We observed the dominance of two teams, Mercedes and Ferrari, and the existence of one more, Red Bull. For the dominant teams we also observe that Lewis Hamilton record breaking streak in only the second half, was enough to give the win not only to him but also to his team, making him the only man with more than 400 points in one season.
+
+<br/>
+<br/>
+<br/>
+
+
+
+##### Citations
+
+https://github.com/tidyverse/dplyr/issues/1188
+https://www.biostars.org/p/303219/
+https://dplyr.tidyverse.org/reference/summarise_all.html
+https://stackoverflow.com/questions/32546219/using-cumsum-by-columns
+https://dplyr.tidyverse.org/reference/vars.html
+https://dplyr.tidyverse.org/reference/mutate_all.html
+https://sebastiansauer.github.io/ordering-bars/
+https://www.nceas.ucsb.edu/~frazier/RSpatialGuides/colorPaletteCheatsheet.pdf
+https://github.com/tidyverse/ggplot2/issues/1340
+http://bc.bojanorama.pl/2013/04/r-color-reference-sheet/  
+https://stackoverflow.com/questions/35090883/remove-all-of-x-axis-labels-in-ggplot
+https://www.rdocumentation.org/packages/ggplot2/versions/3.2.1/topics/facet_wrap
+https://www.sharpsightlabs.com/blog/highlight-data-in-ggplot2/
+https://stackoverflow.com/questions/8592585/combine-points-with-lines-with-ggplot2
+https://community.rstudio.com/t/setting-colours-in-ggplot-conditional-on-value/8328
+https://www.rdocumentation.org/packages/ggplot2/versions/2.2.1/topics/discrete_scale
+http://www.sthda.com/english/wiki/ggplot2-line-types-how-to-change-line-types-of-a-graph-in-r-software
+https://www.r-bloggers.com/how-to-expand-color-palette-with-ggplot-and-rcolorbrewer/
+https://stackoverflow.com/questions/17216358/eliminating-nas-from-a-ggplot
+https://www.rdocumentation.org/packages/knitr/versions/1.25/topics/kable
+
+<br/>
