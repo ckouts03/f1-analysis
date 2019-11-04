@@ -1,0 +1,576 @@
+Homework 2 - Untidy data
+================
+Chrysanthos Koutsoyiannis, Jiuqi Qian, Elena Shaw, and Ruodan Wang
+
+## Setup - Load the data
+
+### Helper Functions
+
+``` r
+rds_to_tibble <- function(rds) {
+  tibble(rds) %>%
+    unnest_wider(rds) %>%
+    return()
+}
+
+test_rds2tibble <- function(rds_in,tbl_out) {
+  test_that("valid tibble", {
+    expect_identical(tibble::validate_tibble(tbl_out),tbl_out)
+  }) 
+  test_that("same number of records", {
+    expect_equal(nrow(tbl_out),length(rds_in))
+  })
+}
+```
+
+## Task 1 - Lego Sales Data
+
+``` r
+sales = readRDS("data/lego_sales.rds")
+```
+
+### Part 1 - Tidying the data
+
+<!-- 
+Covert the `sales` object into a tidy data frame. 
+Be sure to include a write up of your methods. 
+-->
+
+Our approach:
+
+Because the end goal is to end up with a data table where each row
+stores a dinstinct purchase, we recognized that we would need an easier
+way to identify distinct purchasers. While we could do this using a
+combined vector of (`first_name`, `last_name`, `age`) (and maybe
+`phone_number` as well), it would be easier to only have to worry about
+a single key. As a result, we chose to add an additional column
+`person_id` to act as an unique purchaser ID for each purchase
+associated with a given purchaser.
+
+Since the goal is to tidy the data and keep the keys of the json, we
+unnested `purchases` to rows but kept its subfields as columns. This
+also gave the convienent side-effect where purchaser details are also
+duplicated on each new row.
+
+Lastly, since there was more than 1 question which required the
+calculation of a purchase total, we added an additional column
+summarizing the total amount spent on each purchase. We also took the
+opportunity to extract out the area code from `phone_number` in
+anticipation of question 5.
+
+``` r
+sales_as_tbl = rds_to_tibble(sales)
+
+sales_as_tbl$person_id = 1:nrow(sales_as_tbl)
+
+clean_sales = sales_as_tbl %>%
+  unnest_longer(purchases, values_to="purchase_info") %>%
+  unnest_wider(purchase_info) %>%
+  mutate(purchase_total = USPrice * Quantity) %>%
+  separate(col = phone_number, 
+             sep = "-", 
+             into = c("area_code", "phone_no1" , "phone_no2"), 
+             remove = FALSE
+           ) %>%
+  select(-c(phone_no1, phone_no2))
+```
+
+<!-- Print out the first 10 lines of your tidy data frame below -->
+
+``` r
+head(clean_sales,10)
+```
+
+    ## # A tibble: 10 x 19
+    ##    gender first_name last_name   age phone_number area_code hobbies SetID
+    ##    <chr>  <chr>      <chr>     <dbl> <chr>        <chr>     <list>  <int>
+    ##  1 Female Kimberly   Beckstead    24 216-555-2549 216       <chr [… 24701
+    ##  2 Male   Neel       Garvin       35 819-555-3189 819       <chr [… 25626
+    ##  3 Male   Neel       Garvin       35 819-555-3189 819       <chr [… 24665
+    ##  4 Female Chelsea    Bouchard     41 <NA>         <NA>      <chr [… 24695
+    ##  5 Female Chelsea    Bouchard     41 <NA>         <NA>      <chr [… 25626
+    ##  6 Female Chelsea    Bouchard     41 <NA>         <NA>      <chr [… 24721
+    ##  7 Female Bryanna    Welsh        19 <NA>         <NA>      <chr [… 24797
+    ##  8 Female Bryanna    Welsh        19 <NA>         <NA>      <chr [… 24701
+    ##  9 Male   Caleb      Garcia-W…    37 907-555-9236 907       <chr [… 24730
+    ## 10 Male   Caleb      Garcia-W…    37 907-555-9236 907       <chr [… 25611
+    ## # … with 11 more variables: Number <chr>, Theme <chr>, Subtheme <chr>,
+    ## #   Year <int>, Name <chr>, Pieces <int>, USPrice <dbl>, ImageURL <chr>,
+    ## #   Quantity <dbl>, person_id <int>, purchase_total <dbl>
+
+#### Validation
+
+``` r
+# validate data extraction results
+test_rds2tibble(sales, sales_as_tbl)
+
+# validate ETL results
+test_that("cleaned tibble has increased rows ", {
+  expect_gt(nrow(clean_sales), nrow(sales_as_tbl))
+})
+test_that("cleaned tibble has increased columns ", {
+  expect_gte(ncol(clean_sales), ncol(sales_as_tbl))
+})
+```
+
+<br/>
+
+### Part 2 - Questions
+
+1.  What are the three most common first names of purchasers?
+
+Because there are ties for the top 3 most common names, we chose to
+return at least 3 first names as well as return all names of the same
+rank. The finanl result shows that there are 4 purchasers named Jacob or
+Michael, putting these two names as the first and second most common
+first names. Next, for third place, we have a 5-way tie at 3 purchasers
+each: Amanda, Connor, Jackson, Joseph, Joshua.
+
+``` r
+clean_sales %>%
+  count(first_name,person_id) %>%
+  count(first_name) %>%
+  arrange(desc(n)) %>%
+  top_n(n=3, wt=n)
+```
+
+    ## # A tibble: 7 x 2
+    ##   first_name     n
+    ##   <chr>      <int>
+    ## 1 Jacob          4
+    ## 2 Michael        4
+    ## 3 Amanda         3
+    ## 4 Connor         3
+    ## 5 Jackson        3
+    ## 6 Joseph         3
+    ## 7 Joshua         3
+
+2.  Which lego theme has made the most money for lego?
+
+Since the `purchase_total` has already been calculated in our purchases
+table, we can easily summarize on this column. The final result shows
+that “Star Wars” has made the most money for lego at a total of
+$4447.83.
+
+``` r
+clean_sales %>%
+  group_by(Theme) %>%
+  summarize(theme_total = sum(purchase_total)) %>%
+  arrange(desc(theme_total))%>%
+  top_n(1, theme_total)
+```
+
+    ## # A tibble: 1 x 2
+    ##   Theme     theme_total
+    ##   <chr>           <dbl>
+    ## 1 Star Wars       4448.
+
+3.  Do men or women buy more lego sets (per person) on average?
+
+The total amount spent by each gender is `total_quantity` and the total
+number of purchases by each gender is `count`. We call the ratio of
+these two quantities `purchase_capacity`. The final result shows that at
+a purchase capacity of \~3.569 lego sets per person, females have bought
+(ever so slightly) more lego sets on average than males, who have a
+purchase capacity of \~3.558 lego sets per person.
+
+``` r
+clean_sales %>%
+  select(person_id, gender, Quantity) %>%
+  group_by(person_id,gender) %>%
+  summarize(qunatity_each_person_bought=sum(Quantity)) %>%
+  group_by(gender) %>%
+  summarise(count=n(), total_qunatity=sum(qunatity_each_person_bought)) %>%
+  mutate(purchase_capacity= total_qunatity/count) %>%
+  arrange(desc(purchase_capacity))
+```
+
+    ## # A tibble: 2 x 4
+    ##   gender count total_qunatity purchase_capacity
+    ##   <chr>  <int>          <dbl>             <dbl>
+    ## 1 Female   130            464              3.57
+    ## 2 Male     120            427              3.56
+
+4.  What are the five most popular hobbies of lego purchasers?
+
+There are 2 hobbies tied for each of the top two places, and 8 hobbies
+tied for third place, giving us a grand total of 12 distinct hobbies
+which we consider to all share the title of “the top 5 most popular
+hobbies of purchasers”.
+
+NB: We noticed that data in “hobbies” are not distinctly factorized
+(i.e. hobbies that are categorically the same but are recorded as
+different strings such as “dance” and “dancing”). However, we chose not
+to clean this data due to the complexities of implementing a keyword
+index on the list of provided hobbies.
+
+``` r
+sales_as_tbl %>%
+  select(hobbies) %>%
+  unnest_longer(hobbies) %>%
+  filter(!is.na(hobbies)) %>%
+  count(hobbies) %>%
+  top_n(5,n) %>%
+  arrange(desc(n))
+```
+
+    ## # A tibble: 12 x 2
+    ##    hobbies                 n
+    ##    <chr>               <int>
+    ##  1 Animal fancy            6
+    ##  2 Skateboarding           6
+    ##  3 Kitesurfing             5
+    ##  4 Sculling or Rowing      5
+    ##  5 Baseball                4
+    ##  6 Bodybuilding            4
+    ##  7 Gunsmithing             4
+    ##  8 Herping                 4
+    ##  9 Reading                 4
+    ## 10 Seashell collecting     4
+    ## 11 Topiary                 4
+    ## 12 Volleyball              4
+
+5.  Which area code has spent the most money on legos?
+
+Since area code has already been extracted in our cleaned table, we can
+just leverage this column for our summary. Filtering out records for
+which we don’t have an area code, the final result shows that the area
+code of 956 is the top spender.
+
+``` r
+clean_sales %>%
+  filter(!is.na(area_code)) %>%
+  select(area_code,purchase_total) %>%
+  group_by(area_code) %>%
+  summarize(area_expenditure=sum(purchase_total)) %>%
+  top_n(1,area_expenditure)
+```
+
+    ## # A tibble: 1 x 2
+    ##   area_code area_expenditure
+    ##   <chr>                <dbl>
+    ## 1 956                   720.
+
+## Task 2 - GitHub and dplyr
+
+``` r
+commits = readRDS("data/dplyr_2019_commits.rds")
+```
+
+### Part 1 - Tidying the data
+
+<!--
+Covert the revent elements from the `commits` object into a tidy data frame. 
+Be sure to include a write up of your methods. 
+-->
+
+Based on the questions in Part 2, we noticed that there were 2
+categories of questions: those which are directly related to the
+metadata of commits and those which require the granularity of the files
+involved in a commit. As such, we decided to create 2 distinct tables at
+the outset. One table would contain information related to the metadata
+of a commit, where each row would represent a commit. And a second table
+would contain the granularity of information associated with file
+changes. To maintain the relationship of these two tables, we decided on
+using commit `sha` as our key. However, since most of the questions
+related to file changes also involved segmentation by contributor, using
+`sha` as our only key was not as efficient, thus we also duplicated
+`author.login` to our files table.
+
+``` r
+commits_as_tbl = rds_to_tibble(commits)
+
+# Table #1 - commits
+# Extraction: pull out relevant data
+extract_commits = commits_as_tbl %>%
+  select(sha,commit,author,stats) %>%
+  hoist(commit,
+        message="message",
+        commit_author="author") %>%
+  hoist(author,
+        login="login") %>%
+  hoist(commit_author,
+        date="date") %>%
+  unnest_wider(stats) %>%
+  select(-commit,-author,-commit_author)
+
+# Transformation: transform data
+# assigning this in order to perform validation tests
+datetime_regex="T|:"
+date_tbl = extract_commits %>%
+  separate(col=date,into=c("date","hour",
+                           "mins","seconds"),
+           sep=datetime_regex) %>%
+  select(-date,-mins,-seconds)
+
+# rename tibble
+clean_commits = date_tbl
+
+
+
+
+# Table #2 - files
+# Extraction: pull out relevant data
+clean_files = commits_as_tbl %>%
+  select(sha, author, files) %>% 
+  hoist(author,
+        login="login") %>%
+  select(-author) %>%
+  unnest_longer("files",
+                values_to="file_info") %>%
+  hoist(file_info,
+        file_name="filename") %>%
+  hoist(file_info,
+        file_status="status")
+```
+
+<!-- Print out the first 10 lines of your tidy data frame below -->
+
+``` r
+head(clean_commits,10)
+```
+
+    ## # A tibble: 10 x 7
+    ##    sha          message              hour  login  total additions deletions
+    ##    <chr>        <chr>                <chr> <chr>  <int>     <int>     <int>
+    ##  1 77288767e66… Fix README dtplyr l… 12    arcou…     4         2         2
+    ##  2 85faf79c1fd… Use https for all U… 13    batpi…     2         1         1
+    ##  3 ceb74a67ea0… Use https for all U… 12    batpi…     2         1         1
+    ##  4 ec0949254db… "Better performance… 09    romai…    38        37         1
+    ##  5 ef1c4b92942… Add section on back… 18    hadley    40        31         9
+    ##  6 4af23627943… "select_if() discar… 09    romai…    10         9         1
+    ##  7 b82aff227cc… "`group_by()` does … 11    romai…    50        44         6
+    ##  8 c6a1f614688… "group_walk() retur… 08    romai…     2         1         1
+    ##  9 4ce2a78a52d… "Removed rbind_list… 12    bjung…   226         3       223
+    ## 10 7ca2fc1229b… Moved the alternati… 14    sinar…    14         4        10
+
+``` r
+head(clean_files,10)
+```
+
+    ## # A tibble: 10 x 5
+    ##    sha               login    file_name             file_status file_info  
+    ##    <chr>             <chr>    <chr>                 <chr>       <list>     
+    ##  1 77288767e663bbcc… arcoutte README.Rmd            modified    <named lis…
+    ##  2 77288767e663bbcc… arcoutte README.md             modified    <named lis…
+    ##  3 85faf79c1fd74f4b… batpiga… DESCRIPTION           modified    <named lis…
+    ##  4 ceb74a67ea0d9ce7… batpiga… DESCRIPTION           modified    <named lis…
+    ##  5 ec0949254dbbfab3… romainf… NEWS.md               modified    <named lis…
+    ##  6 ec0949254dbbfab3… romainf… inst/include/dplyr/s… modified    <named lis…
+    ##  7 ec0949254dbbfab3… romainf… inst/include/dplyr/v… modified    <named lis…
+    ##  8 ec0949254dbbfab3… romainf… src/init.cpp          modified    <named lis…
+    ##  9 ef1c4b9294228d81… hadley   README.Rmd            modified    <named lis…
+    ## 10 ef1c4b9294228d81… hadley   README.md             modified    <named lis…
+
+#### Validation
+
+``` r
+# validate data extraction results
+test_rds2tibble(commits, commits_as_tbl)
+
+# Validate commits extraction results
+check_sum = extract_commits %>%
+  select(additions, deletions, total) %>%
+  rowwise() %>%
+  filter(total!=(additions+deletions))
+
+test_that("valid tibble", {
+  expect_identical(tibble::validate_tibble(check_sum),check_sum)
+}) 
+test_that("total is sum of add and del", {
+  expect_equal(nrow(check_sum), 0)
+})
+
+# validate commits transformation results
+test_that("dated has increased columns ", {
+  expect_gte(ncol(date_tbl), ncol(extract_commits))
+})
+
+test_that("dated has maintained rows ", {
+  expect_equal(nrow(date_tbl), nrow(extract_commits))
+})
+
+# validate files extraction results
+test_that("files tibble has increased rows ", {
+  expect_gt(nrow(clean_files), nrow(commits_as_tbl))
+})
+```
+
+### Part 2 - Questions
+
+1.  Who are the top five contributors (in terms of the most commits) to
+    dplyr in the last year?
+
+For this question, we used the commits table. Since each row of this
+dataframe is a commit, we were able to directly count the number of
+commits (rows) by `login` name.
+
+According to our result, the top five contributors (by most number of
+commits) to dplyr in the last year are “romainfrancois” (at 357
+commits\!), “lionel-”, “hadley”, “yutannihilation” and “krlmlr”.
+
+``` r
+clean_commits %>%
+  count(login) %>%
+  arrange(desc(n)) %>% 
+  top_n(5,n)
+```
+
+    ## # A tibble: 5 x 2
+    ##   login               n
+    ##   <chr>           <int>
+    ## 1 romainfrancois    357
+    ## 2 lionel-            14
+    ## 3 hadley             13
+    ## 4 yutannihilation     9
+    ## 5 krlmlr              6
+
+2.  Which four files have been modified in the most number of commits?
+
+Here we are able to leverage our files table directly. After filtering
+only for files that have been “modified”, we can directly count the
+number of times a given `file_name` shows up in our table.
+
+According to our results, the files “NEWS.md”, “DESCRIPTION”, “R/funs.R”
+and “tests/testthat/test-colwise-mutate.R” are our top 4 most modified
+files during commits.
+
+``` r
+clean_files %>%
+  filter(file_status=='modified') %>%
+  count(file_name) %>%
+  arrange(desc(n)) %>%
+  top_n(4,n)
+```
+
+    ## # A tibble: 4 x 2
+    ##   file_name                                n
+    ##   <chr>                                <int>
+    ## 1 NEWS.md                                 77
+    ## 2 DESCRIPTION                             53
+    ## 3 R/funs.R                                33
+    ## 4 tests/testthat/test-colwise-mutate.R    32
+
+3.  When is the most active time of the day for development on dplyr?
+    More specifically, what is the average number of total changes made
+    per commit for each hour of the day?
+
+We filtered out commits with messages that contain “revdep” or “Merge”.
+On this filtered subset of commits and for each hour represented, we
+added a new column to calculate the average number of changes per
+commit.
+
+According to our results, hour 12 is by far the most active time of the
+day for development on dplyr.
+
+``` r
+# helper function
+is_invalid_msg <- function(msg) {
+  return(grepl("Merge",msg)|grepl("revdep",msg))
+}
+
+filter_commits = clean_commits %>%
+    filter(!is_invalid_msg(message))
+
+# validate results
+test_that("filtered is less than original", {
+  expect_lte(nrow(filter_commits), nrow(clean_commits))
+})
+
+# Actual query to answer question
+filter_commits %>%
+  group_by(hour) %>%   
+  summarise(total_change=sum(total),times_perh=n()) %>%
+  mutate(avg_commits=total_change/times_perh) %>%
+  select(hour,avg_commits) %>%
+  arrange(desc(avg_commits))
+```
+
+    ## # A tibble: 24 x 2
+    ##    hour  avg_commits
+    ##    <chr>       <dbl>
+    ##  1 12          150. 
+    ##  2 13           55.0
+    ##  3 09           39.2
+    ##  4 14           38.6
+    ##  5 16           38.0
+    ##  6 02           34  
+    ##  7 07           29.7
+    ##  8 08           27.9
+    ##  9 15           26.7
+    ## 10 11           25.2
+    ## # … with 14 more rows
+
+4.  Based on these data is there any “evidence” that commit message
+    length is related to the complexity of the commit (as measured by
+    the total number of changes in the commit)? Justify your answer.
+
+We created a new column `msg_length` to report the length of the commit
+message. To visually inspect whether there is a noticable relationship,
+we plotted `msg_length` against `total` number of commit changes.
+
+``` r
+q4_tbl = clean_commits %>% 
+          mutate(msg_length= map_int(message,nchar)) %>%
+          select(msg_length,total)
+
+q4_tbl %>%
+  plot.default()
+```
+
+![](hw2_files/figure-gfm/unnamed-chunk-19-1.png)<!-- -->
+
+In the first plot, we weren’t able to conclude much as there was not an
+obvious relationship. However, we did notice that most commits are
+concentrated in the domain of 200 (for `msg_length`) and the range of
+250 (for `total`), so we zommed in on this range to better inspect our
+data.
+
+``` r
+q4_tbl %>%
+  filter(msg_length<=200, total<=250)  %>%
+  plot.default()
+```
+
+![](hw2_files/figure-gfm/unnamed-chunk-20-1.png)<!-- -->
+
+In this second plot, we still weren’t convinced of any noticable
+relationship between the two variables either. To numerically validate
+this seeming non-relationship, we also calculated the correlation
+between the two variables and found it to be quite small, only \~.064.
+
+In summary, we conclude that there is not sufficient evidence that
+commit message length is related to the complexity of the commit.
+
+``` r
+cat("Correlation: ", cor(q4_tbl$total, q4_tbl$msg_length))
+```
+
+    ## Correlation:  0.06356261
+
+5.  Other than Romain Francois, which three contributors have worked on
+    the most different files in the repository? In order words, who has
+    the greatest number of unique file names among their commits.
+
+Since we already created a table containing the list of file changes
+across commits, we were able to directly operate on this table. After
+filtering out all files associated with the commits of Romain Francois,
+we looked at the number of distinct files each commiter has worked on.
+Our results show that the top 3 contributors who have worked on the most
+different files are: “Copepoda”, “yutannihilation”, and “lionel-”
+
+``` r
+clean_files %>% 
+  filter(login!="romainfrancois") %>%
+  group_by(login) %>%
+  summarize(distinct_files=n_distinct(file_name)) %>%
+  arrange(desc(distinct_files)) %>% 
+  top_n(3,distinct_files)
+```
+
+    ## # A tibble: 3 x 2
+    ##   login           distinct_files
+    ##   <chr>                    <int>
+    ## 1 Copepoda                    40
+    ## 2 yutannihilation             35
+    ## 3 lionel-                     21
